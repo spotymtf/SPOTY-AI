@@ -9,7 +9,13 @@ const {
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const config = require('./config');
-const { imageToWebp } = require('wa-sticker-formatter');
+
+// Import des commandes
+const downloadCommands = require('./commands/download');
+const groupCommands = require('./commands/group');
+const ownerCommands = require('./commands/owner');
+const otherCommands = require('./commands/other');
+const { isUrl, getRandom } = require('./commands/utils');
 
 // Logger setup
 const logger = pino({ level: 'silent' });
@@ -56,7 +62,9 @@ async function startBot() {
             const user = (message.key.participant || jid).split('@')[0];
             const body = msg.conversation || msg.extendedTextMessage?.text || '';
             const isCmd = body.startsWith(config.PREFIX);
-            const isOwner = config.OWNERS.includes(jid.replace('@s.whatsapp.net', ''));
+            const isGroup = jid.endsWith('@g.us');
+            const isOwner = config.OWNERS.includes(user);
+            const isAdmin = isGroup ? await isGroupAdmin(sock, jid, user + '@s.whatsapp.net') : false;
 
             // Auto-read messages
             if (config.AUTO_READ) await sock.readMessages([message.key]);
@@ -67,64 +75,124 @@ async function startBot() {
                 const args = body.split(/ +/).slice(1);
                 
                 try {
-                    switch (cmd) {
-                        case 'ping':
-                            await sock.sendMessage(jid, { text: '🚀 Pong!' });
-                            break;
-                            
-                        case 'owner':
-                            const ownerList = config.OWNERS.map((num, i) => 
-                                `${i+1}. ${num}`).join('\n');
-                            await sock.sendMessage(jid, {
-                                text: `👑 *SPOTY AI Owners* 👑\n\n${ownerList}`,
-                                mentions: config.OWNERS.map(num => num + '@s.whatsapp.net')
-                            });
-                            break;
-                            
-                        case 'sticker':
-                            if (msg.imageMessage) {
-                                const media = await downloadContent(message);
-                                const sticker = await imageToWebp(media);
-                                await sock.sendMessage(jid, { sticker }, { quoted: message });
-                            }
-                            break;
-                            
-                        // Add more commands here
+                    // Menu command
+                    if (cmd === 'menu') {
+                        await showMenu(sock, jid);
+                        return;
+                    }
+
+                    // Handle commands by category
+                    if (downloadCommands[cmd]) {
+                        await downloadCommands[cmd](sock, jid, args, message);
+                    } 
+                    else if (groupCommands[cmd]) {
+                        if (isGroup) {
+                            await groupCommands[cmd](sock, jid, user, args, message, isAdmin);
+                        } else {
+                            await sock.sendMessage(jid, { text: 'Cette commande est réservée aux groupes' });
+                        }
+                    }
+                    else if (ownerCommands[cmd]) {
+                        if (isOwner) {
+                            await ownerCommands[cmd](sock, jid, args, message);
+                        } else {
+                            await sock.sendMessage(jid, { text: 'Commande réservée aux owners' });
+                        }
+                    }
+                    else if (otherCommands[cmd]) {
+                        await otherCommands[cmd](sock, jid, args, message);
+                    }
+                    else {
+                        await sock.sendMessage(jid, { 
+                            text: `Commande inconnue. Tapez ${config.PREFIX}menu pour voir les commandes disponibles`
+                        });
                     }
                 } catch (error) {
                     console.error('Command error:', error);
+                    await sock.sendMessage(jid, { text: 'Une erreur est survenue lors de l\'exécution de la commande' });
                 }
             }
         }
     }
 
     async function handleGroupUpdate({ id, participants, action }) {
+        if (!config.WELCOME_ENABLED && !config.GOODBYE_ENABLED) return;
+        
         const metadata = await sock.groupMetadata(id);
         
         for (const participant of participants) {
             const user = participant.split('@')[0];
-            const msg = action === 'add' 
-                ? config.WELCOME_MSG
+            if (action === 'add' && config.WELCOME_ENABLED) {
+                const msg = config.WELCOME_MSG
                     .replace('{user}', user)
-                    .replace('{group}', metadata.subject)
-                : config.GOODBYE_MSG.replace('{user}', user);
-            
-            await sock.sendMessage(id, { 
-                text: msg, 
-                mentions: [participant] 
-            });
+                    .replace('{group}', metadata.subject);
+                await sock.sendMessage(id, { text: msg, mentions: [participant] });
+            } 
+            else if (action === 'remove' && config.GOODBYE_ENABLED) {
+                const msg = config.GOODBYE_MSG.replace('{user}', user);
+                await sock.sendMessage(id, { text: msg, mentions: [participant] });
+            }
         }
     }
 
-    // Helper function
-    async function downloadContent(message) {
-        const stream = await downloadContentFromMessage(message, 'buffer', {});
-        let buffer = Buffer.from([]);
-        for await (const chunk of stream) {
-            buffer = Buffer.concat([buffer, chunk]);
+    async function isGroupAdmin(sock, groupJid, userJid) {
+        try {
+            const metadata = await sock.groupMetadata(groupJid);
+            const participant = metadata.participants.find(p => p.id === userJid);
+            return participant?.admin === 'admin' || participant?.admin === 'superadmin';
+        } catch (error) {
+            console.error('Error checking admin status:', error);
+            return false;
         }
-        return buffer;
     }
+
+    async function showMenu(sock, jid) {
+        const menuSections = [
+            config.MENU_HEADER,
+            `┃ *Prefix* : [ ${config.PREFIX} ]`,
+            `┃ *Version* : 2.0.0`,
+            `┃ *Mode* : ${config.MODE}`,
+            config.MENU_FOOTER,
+            "",
+            "┏▣ ◈ *DOWNLOAD MENU* ◈",
+            "│➽ tiktok [lien]",
+            config.MENU_FOOTER,
+            "",
+            "┏▣ ◈ *GROUP MENU* ◈",
+            "│➽ add [num]",
+            "│➽ antilink [on/off]",
+            "│➽ welcome [message]",
+            "│➽ kick @user",
+            "│➽ promote @user",
+            "│➽ demote @user",
+            "│➽ tagall [message]",
+            config.MENU_FOOTER,
+            "",
+            "┏▣ ◈ *OTHER MENU* ◈",
+            "│➽ ping",
+            "│➽ runtime",
+            "│➽ time",
+            config.MENU_FOOTER,
+            "",
+            "┏▣ ◈ *OWNER MENU* ◈",
+            "│➽ block @user",
+            "│➽ restart",
+            "│➽ setppbot [image]",
+            config.MENU_FOOTER
+        ].join('\n');
+        
+        await sock.sendMessage(jid, { text: menuSections });
+    }
+}
+
+// Helper function
+async function downloadContent(message) {
+    const stream = await downloadContentFromMessage(message, 'buffer', {});
+    let buffer = Buffer.from([]);
+    for await (const chunk of stream) {
+        buffer = Buffer.concat([buffer, chunk]);
+    }
+    return buffer;
 }
 
 // Start bot with error handling
