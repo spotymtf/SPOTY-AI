@@ -1,0 +1,35 @@
+{
+  "name": "SPOTY-AI",
+  "description": "WhatsApp Bot by SPOTY AI Team",
+  "logo": "https://i.imgur.com/your-logo.jpg",
+  "keywords": ["whatsapp-bot", "SPOTY-AI", "nodejs"],
+  "success_url": "/",
+  "stack": "container",
+  "env": {
+    "SESSION_ID": {
+      "description": "Session ID from your WhatsApp connection",
+      "required": true,
+      "value": ""
+    },
+    "PREFIX": {
+      "description": "Command prefix (e.g. .)",
+      "required": false,
+      "value": "."
+    },
+    "OWNERS": {
+      "description": "Owner numbers separated by comma",
+      "required": true,
+      "value": "+50946904797,+50944156629"
+    },
+    "BOT_NAME": {
+      "description": "Display name for your bot",
+      "required": false,
+      "value": "SPOTY-AI"
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "https://github.com/heroku/heroku-buildpack-nodejs.git"
+    }
+  ]
+}
